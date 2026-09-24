@@ -5,13 +5,33 @@
 [![Windows CI](https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/Luomo520/Codex-Desktop-Usage-Monitor-Windows)](https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/releases/latest)
 
+## 本 Fork v3.1.3 更新内容
+
+本 Fork 基于上游项目
+[`JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows`](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows)
+的 `v3.1.2` 版本开发，主要新增和调整如下：
+
+| 更新项目 | 新增或调整内容 |
+| --- | --- |
+| CC Switch 当前供应商联动 | 自动读取 CC Switch 当前选择的 Codex 供应商，在监视面板显示供应商名称、账户余额、累计已用额度、Token 汇总、最近模型、请求时间和响应耗时；切换供应商后自动跟随，无需重复配置 API Key。 |
+| CC Switch 今日 Token 单位 | “今日 Token”固定以百万 Token 的 `M` 为单位显示，例如 `12,340,000` 显示为 `12.34M`，不再使用“万”。 |
+| 最近 X 次回答缓存 | 新增最近 X 次已完成回答的缓存命中率明细；X 默认为 5，可设置为 1–20，并在重启后保留。 |
+| 近期缓存平均值 | 折叠监视栏中的“近期缓存”显示最近 X 次有效缓存命中率的算术平均值，不显示某一次、最高值或最低值。 |
+| 缓存低命中率标红 | 新增可配置阈值，默认 `90%`，范围 `0–100`；总缓存、上次回答、近期平均及逐条记录严格低于阈值时标红，设置为 `0` 可关闭。 |
+| 标题栏右侧显示 | 折叠监视栏优先移动到当前会话标题栏右侧，详细面板从标题栏下方展开；无法识别标题栏时自动回退到输入框工具栏。 |
+| 日志恢复和去重 | 最近回答缓存支持恢复日志、轮转日志和重叠日志合并，未完成回答不计入，重启重扫不会重复。 |
+| 文档与测试 | 新增 CC Switch 开发说明、缓存历史说明、Fork 差异说明，并补充设置持久化、安全边界、日志恢复和 UI 生命周期测试。 |
+
+完整的功能对比、安全边界、主要改动文件和未来同步上游注意事项，请查看
+[《本 Fork 与上游主线的区别》](docs/fork-differences.md)。
+
+> 当前代码版本为 `v3.1.3` 候选版。尚未创建 `v3.1.3` Git 标签或 GitHub Release，因此页面顶部的 Release 徽章仍可能显示 `v3.1.2`。
+
 Codex Usage Monitor 把官方订阅周期、当前会话 Token、额度与 Token 换算观测、社区重置概率、Tibo 最新 X 动态，以及可选的 API 账户和 API Key 用量，直接放到 Windows 版 Codex Desktop 的输入区域旁。
 
 监视器通过仅绑定本机的 Chrome DevTools Protocol（CDP）运行时注入，不是独立悬浮窗，也不修改 WindowsApps、`app.asar`、Codex 登录文件或模型配置。
 
 > 本项目是非官方项目，与 OpenAI 没有隶属、赞助或背书关系。社区重置概率和 Tibo 动态也不是 OpenAI 官方数据。Codex 更新可能改变页面结构；项目会持续通过兼容性测试适配新版界面。
-
-> **Fork 说明：** 当前仓库是基于上游 `JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows` `v3.1.2` 的增强 Fork。`v3.1.3` 新增 CC Switch 当前供应商联动、最近 X 次回答缓存、缓存低命中率标红及标题栏右侧显示。完整对比见 [本 Fork 与上游主线的区别](docs/fork-differences.md)。
 
 ![Codex Usage Monitor 本机展开面板实拍：统一续跑发送内容与重置预告方式](docs/images/monitor-expanded.png)
 
@@ -29,9 +49,7 @@ Codex Usage Monitor 把官方订阅周期、当前会话 Token、额度与 Token
 
 ## 1. 三步开始使用
 
-当前版本 **v3.1.3**：新增 CC Switch 当前供应商联动、最近 X 次缓存统计、低命中率标红阈值和标题栏右侧显示；CC Switch 今日 Token 统一以 `M` 为单位。变更见 [更新日志](CHANGELOG.md)。
-
-本 Fork 的功能边界、上游保留能力、主要改动文件及未来同步注意事项见 [Fork 差异说明](docs/fork-differences.md)。
+当前代码版本为 **v3.1.3 候选版**。完整变更记录见 [更新日志](CHANGELOG.md)。
 
 ### 1.1 准备环境
 
