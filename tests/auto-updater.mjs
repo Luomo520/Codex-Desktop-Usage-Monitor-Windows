@@ -25,7 +25,7 @@ const release = (overrides = {}) => ({
     name: "codex-usage-monitor-windows-2.1.3.zip",
     size: bytes.length,
     digest: `sha256:${digest}`,
-    browser_download_url: "https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows/releases/download/v2.1.3/codex-usage-monitor-windows-2.1.3.zip",
+    browser_download_url: "https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/releases/download/v2.1.3/codex-usage-monitor-windows-2.1.3.zip",
   }],
   ...overrides,
 });

@@ -5,8 +5,8 @@ import { spawn } from "node:child_process";
 
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const MAX_RELEASE_BYTES = 64 * 1024 * 1024;
-export const RELEASE_API_URL = "https://api.github.com/repos/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows/releases/latest";
-const REPOSITORY_PATH = "/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows";
+export const RELEASE_API_URL = "https://api.github.com/repos/Luomo520/Codex-Desktop-Usage-Monitor-Windows/releases/latest";
+const REPOSITORY_PATH = "/Luomo520/Codex-Desktop-Usage-Monitor-Windows";
 const VERSION_PATTERN = /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/;
 const DIGEST_PATTERN = /^sha256:([a-f0-9]{64})$/i;
 

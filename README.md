@@ -2,14 +2,16 @@
 
 > In-app usage monitor and status bar for OpenAI Codex Desktop on Windows
 
-[![Windows CI](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml)
-[![Latest Release](https://img.shields.io/github/v/release/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows)](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows/releases/latest)
+[![Windows CI](https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/Luomo520/Codex-Desktop-Usage-Monitor-Windows)](https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/releases/latest)
 
 Codex Usage Monitor 把官方订阅周期、当前会话 Token、额度与 Token 换算观测、社区重置概率、Tibo 最新 X 动态，以及可选的 API 账户和 API Key 用量，直接放到 Windows 版 Codex Desktop 的输入区域旁。
 
 监视器通过仅绑定本机的 Chrome DevTools Protocol（CDP）运行时注入，不是独立悬浮窗，也不修改 WindowsApps、`app.asar`、Codex 登录文件或模型配置。
 
 > 本项目是非官方项目，与 OpenAI 没有隶属、赞助或背书关系。社区重置概率和 Tibo 动态也不是 OpenAI 官方数据。Codex 更新可能改变页面结构；项目会持续通过兼容性测试适配新版界面。
+
+> **Fork 说明：** 当前仓库是基于上游 `JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows` `v3.1.2` 的增强 Fork。`v3.1.3` 新增 CC Switch 当前供应商联动、最近 X 次回答缓存、缓存低命中率标红及标题栏右侧显示。完整对比见 [本 Fork 与上游主线的区别](docs/fork-differences.md)。
 
 ![Codex Usage Monitor 本机展开面板实拍：统一续跑发送内容与重置预告方式](docs/images/monitor-expanded.png)
 
@@ -29,6 +31,8 @@ Codex Usage Monitor 把官方订阅周期、当前会话 Token、额度与 Token
 
 当前版本 **v3.1.3**：新增 CC Switch 当前供应商联动、最近 X 次缓存统计、低命中率标红阈值和标题栏右侧显示；CC Switch 今日 Token 统一以 `M` 为单位。变更见 [更新日志](CHANGELOG.md)。
 
+本 Fork 的功能边界、上游保留能力、主要改动文件及未来同步注意事项见 [Fork 差异说明](docs/fork-differences.md)。
+
 ### 1.1 准备环境
 
 - Windows 10 或 Windows 11。
@@ -39,7 +43,7 @@ Codex Usage Monitor 把官方订阅周期、当前会话 Token、额度与 Token
 
 ### 1.2 下载、安装、启动
 
-1. 从 [最新 Release](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows/releases/latest) 下载 `codex-usage-monitor-windows-*.zip`。
+1. 从 [最新 Release](https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows/releases/latest) 下载 `codex-usage-monitor-windows-*.zip`。
 2. 解压 ZIP，在解压目录中运行：
 
    ```powershell
@@ -55,7 +59,7 @@ Codex Usage Monitor 把官方订阅周期、当前会话 Token、额度与 Token
 不熟悉 PowerShell 时，可以把下面这段话直接发送给 Windows 版 Codex：
 
 ```text
-请安装这个项目：https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows
+请安装这个项目：https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows
 先阅读仓库根目录的 AGENTS.md 和 README.md，再运行 install.ps1。自动寻找 Microsoft Store 和常见非 Store Codex 路径；找不到时才询问我选择真实的 ChatGPT.exe 或 codex.exe。不要猜路径，不要修改 WindowsApps、app.asar、Codex 登录文件或模型配置，也不要强制终止或重启我当前的 Codex。安装后验证桌面的“Codex Usage Monitor”快捷方式。
 官方订阅无需配置。API 账户和 API Key 请优先指导我在监视栏展开面板中填写；密钥不能粘贴到聊天、源码、JSON 或日志。找不到服务商字段时，请根据公开文档或脱敏截图解释，不要猜测接口。
 ```
@@ -249,7 +253,7 @@ https://codex.gussuriworks.com/api/current?locale=zh
 ### 4.3 从源码安装
 
 ```powershell
-git clone https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows.git
+git clone https://github.com/Luomo520/Codex-Desktop-Usage-Monitor-Windows.git
 cd Codex-Desktop-Usage-Monitor-Windows
 pwsh -NoProfile -File .\install.ps1
 ```
