@@ -40,7 +40,7 @@ try {
     metricOrder: ["official:secondaryRemaining", "bad", "official:secondaryRemaining", "api-account:balance"],
     secret: "must-not-persist",
   }), {
-    schemaVersion: 2,
+    schemaVersion: 4,
     metrics: { official: ["secondaryRemaining", "currentTaskTokens"] },
     metricOrder: ["official:secondaryRemaining", "api-account:balance"],
     apiKeyMetricsVersion: 0,
@@ -56,6 +56,8 @@ try {
     showApiColumns: true,
     showResetForecast: true,
     showQuotaToken: true,
+    recentCacheTurns: 5,
+    cacheAlertThreshold: 90,
     autoResumeMessage: "继续",
     autoResumeThreads: {},
   });
@@ -74,6 +76,8 @@ try {
     showApiColumns: false,
     showResetForecast: false,
     showQuotaToken: false,
+    recentCacheTurns: 7,
+    cacheAlertThreshold: 85.5,
     metricOrder: ["official:secondaryRemaining", "api-account:balance"],
     autoResumeMessage: "请继续完成当前任务",
     autoResumeThreads: { [threadId]: { enabled: true, message: "请继续完成当前任务" }, invalid: { enabled: true, message: "bad" } },
@@ -92,6 +96,8 @@ try {
   assert.equal(restarted.current.showApiColumns, false);
   assert.equal(restarted.current.showResetForecast, false);
   assert.equal(restarted.current.showQuotaToken, false);
+  assert.equal(restarted.current.recentCacheTurns, 7);
+  assert.equal(restarted.current.cacheAlertThreshold, 85.5);
   assert.equal(normalizeUiSettings({ metrics: {} }).showQuotaToken, true, "existing settings without the new switch keep the quota column visible");
   await restarted.save({ ...restarted.current, showQuotaToken: true });
   assert.equal((await createUiSettingsStore(settingsPath)).current.showQuotaToken, true, "quota visibility can be re-enabled and survives restart");
@@ -102,6 +108,16 @@ try {
   assert.deepEqual(restarted.current.autoResumeThreads, { [threadId]: { enabled: true, message: "请继续完成当前任务" } });
   assert.equal(normalizeUiSettings({ autoResumeMessage: "\n" }).autoResumeMessage, "继续");
   assert.equal(normalizeUiSettings({ autoResumeMessage: "x".repeat(501) }).autoResumeMessage, "继续");
+  assert.equal(normalizeUiSettings({}).recentCacheTurns, 5);
+  assert.equal(normalizeUiSettings({ recentCacheTurns: 0 }).recentCacheTurns, 1);
+  assert.equal(normalizeUiSettings({ recentCacheTurns: 99 }).recentCacheTurns, 20);
+  assert.equal(normalizeUiSettings({ recentCacheTurns: "8.9" }).recentCacheTurns, 8);
+  assert.equal(normalizeUiSettings({ recentCacheTurns: "invalid" }).recentCacheTurns, 5);
+  assert.equal(normalizeUiSettings({}).cacheAlertThreshold, 90);
+  assert.equal(normalizeUiSettings({ cacheAlertThreshold: -1 }).cacheAlertThreshold, 0);
+  assert.equal(normalizeUiSettings({ cacheAlertThreshold: 101 }).cacheAlertThreshold, 100);
+  assert.equal(normalizeUiSettings({ cacheAlertThreshold: "89.94" }).cacheAlertThreshold, 89.9);
+  assert.equal(normalizeUiSettings({ cacheAlertThreshold: "invalid" }).cacheAlertThreshold, 90);
   assert.equal(JSON.parse(await fs.readFile(settingsPath, "utf8")).secret, undefined);
 
   await fs.writeFile(settingsPath, "not-json", "utf8");

@@ -648,7 +648,7 @@ function Test-CodexUsagePackagePath([string]$InjectorPath) {
     foreach ($relative in @(
       'VERSION',
       'assets\usage-constants.js', 'assets\usage-i18n.js', 'assets\usage-placement.js', 'assets\usage-inject.js',
-      'scripts\auto-updater.mjs', 'scripts\auto-update.ps1', 'scripts\usage-client.mjs', 'scripts\usage\scheduling.mjs', 'scripts\monitor-utils.ps1'
+      'scripts\auto-updater.mjs', 'scripts\auto-update.ps1', 'scripts\usage-client.mjs', 'scripts\ccswitch-client.mjs', 'scripts\usage\scheduling.mjs', 'scripts\monitor-utils.ps1'
     )) {
       if (-not (Test-Path -LiteralPath (Join-Path $package $relative) -PathType Leaf)) { return $false }
     }

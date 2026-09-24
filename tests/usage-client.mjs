@@ -15,6 +15,7 @@ import {
   mergeOfficialLocalUsage,
   normalizeApiUsageView,
   normalizeApiAccountView,
+  normalizeCcSwitchView,
   normalizeCctqUsageView,
   normalizeCredentialBaseUrl,
   normalizeResetForecastView,
@@ -831,16 +832,22 @@ try {
   appendFileSync(sessionPath, `${taskComplete(trackerNow - 4_000, turnId)}\n`);
   const completedCache = await tracker.refresh();
   assert.ok(Math.abs(completedCache.lastTurnCacheHitRate - 86 / 152 * 100) < 1e-9);
+  assert.deepEqual(completedCache.recentTurnCacheRates.map((item) => item.turnId), [turnId]);
+  assert.ok(Math.abs(completedCache.recentTurnCacheRates[0].cacheHitRate - 86 / 152 * 100) < 1e-9);
   assert.equal(toSessionUsageSource(completedCache, trackerNow).metrics.find(item => item.id === "lastTurnCacheHitRate").value, "56.6%");
   const nextCacheTurn = uuidAt(trackerNow - 3_000, 26);
   appendFileSync(sessionPath, `${turnContext(trackerNow - 3_000, nextCacheTurn)}\n${tokenCountWithCache(trackerNow - 2_000, 200, 40, 160, 102, 32, 32)}\n`);
   assert.equal((await tracker.refresh()).lastTurnCacheHitRate, completedCache.lastTurnCacheHitRate,
     "in-progress answer preserves previous completed cache rate");
   appendFileSync(sessionPath, `${tokenCountWithCache(trackerNow - 1_900, 200, 40, 160, 102, 32, 32)}\n${taskComplete(trackerNow - 1_000, nextCacheTurn)}\n`);
-  assert.equal((await tracker.refresh()).lastTurnCacheHitRate, 100, "duplicate snapshot is ignored");
+  const twoCompleted = await tracker.refresh();
+  assert.equal(twoCompleted.lastTurnCacheHitRate, 100, "duplicate snapshot is ignored");
+  assert.deepEqual(twoCompleted.recentTurnCacheRates.map((item) => item.turnId), [nextCacheTurn, turnId]);
   const restoredCacheTracker = new LocalCodexTokenTracker({ sessionRoot, counterPath: null, now: () => trackerNow });
   restoredCacheTracker.setCurrentThreadId(threadId);
-  assert.equal((await restoredCacheTracker.refresh()).lastTurnCacheHitRate, 100, "completed cache rate restores from log");
+  const restoredCache = await restoredCacheTracker.refresh();
+  assert.equal(restoredCache.lastTurnCacheHitRate, 100, "completed cache rate restores from log");
+  assert.deepEqual(restoredCache.recentTurnCacheRates.map((item) => item.turnId), [nextCacheTurn, turnId], "recent cache history restores from log");
   const rotatedTurn = uuidAt(trackerNow - 800, 27);
   const runtimeId = uuidAt(trackerNow - 700, 28);
   writeFileSync(path.join(sessionRoot, `rollout-cache-${threadId}_${runtimeId}.jsonl`), [
@@ -888,6 +895,13 @@ try {
   assert.equal(completionOnly.currentTaskTokens, 370);
   assert.equal(completionOnly.lastTurnTokens, 40, "explicit completion can be in a new file without turn_context");
   assert.equal(completionOnly.lastTurnCacheHitRate, 50);
+  assert.deepEqual(completionOnly.recentTurnCacheRates.slice(0, 4).map((item) => item.turnId),
+    [completionOnlyTurn, splitTurn, rotatedTurn, nextCacheTurn], "completed answers are newest-first without duplicate turns");
+  assert.equal(new Set(completionOnly.recentTurnCacheRates.map((item) => item.turnId)).size, completionOnly.recentTurnCacheRates.length,
+    "overlapping runtime logs do not duplicate recent answers");
+  const recentMetric = toSessionUsageSource(completionOnly, trackerNow).metrics.find((item) => item.id === "recentTurnCacheRates");
+  assert.equal(recentMetric.value, `${completionOnly.recentTurnCacheRates.length} 次`);
+  assert.deepEqual(recentMetric.recentRates, completionOnly.recentTurnCacheRates);
 } finally {
   rmSync(cacheTrackerRoot, { recursive: true, force: true });
 }
@@ -1123,7 +1137,7 @@ const noOfficialWindows = toOfficialUsageSource({ ...view, windows: [] }, now.ge
 assert.equal(noOfficialWindows.metrics.find((item) => item.id === "primaryReset").value, "--");
 const noSessionUsage = toSessionUsageSource({ ...view, currentThreadId: null, currentStatus: null, currentTaskTokens: null, lastTurnTokens: null, cacheHitRate: null, contextCompactions: null }, now.getTime());
 assert.equal(noSessionUsage.status, "unavailable");
-assert.deepEqual(noSessionUsage.metrics.map((item) => item.value), ["--", "--", "--", "--", "--", "--", "--"]);
+assert.deepEqual(noSessionUsage.metrics.map((item) => item.value), ["--", "--", "--", "--", "--", "--", "--", "--"]);
 
 const cctq = normalizeCctqUsageView({
   data: { total_granted: 7500000, total_used: 2500000, unlimited_quota: false, expires_at: 0 },
@@ -1335,6 +1349,19 @@ const persistedToday = normalizeApiAccountView({ data: { quota: 5000000, used_qu
   persistentTodayTokens: 123456,
 });
 assert.equal(persistedToday.metrics.find((item) => item.id === "todayTokens").value, "12万");
+
+const ccSwitchMillionTokens = normalizeCcSwitchView({
+  provider: { name: "测试供应商" },
+  stats: { todayTokens: 12340000, totalTokens: 12340000, totalCostUsd: 0, latest: null },
+}, { isValid: true, remaining: 10, unit: "USD" }, { now: accountNow });
+assert.equal(ccSwitchMillionTokens.metrics.find((item) => item.id === "todayTokens").value, "12.34M");
+assert.equal(ccSwitchMillionTokens.metrics.find((item) => item.id === "todayTokens").display, "今日 12.34M");
+
+const ccSwitchSmallMillionTokens = normalizeCcSwitchView({
+  provider: { name: "测试供应商" },
+  stats: { todayTokens: 420, totalTokens: 420, totalCostUsd: 0, latest: null },
+}, { isValid: true, remaining: 10, unit: "USD" }, { now: accountNow });
+assert.equal(ccSwitchSmallMillionTokens.metrics.find((item) => item.id === "todayTokens").value, "0.00042M");
 
 const automaticCounterRoot = mkdtempSync(path.join(os.tmpdir(), "codex-usage-auto-counter-test-"));
 try {

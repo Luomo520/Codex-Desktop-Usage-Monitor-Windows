@@ -16,12 +16,13 @@
     const rect = node?.getBoundingClientRect?.();
     return Boolean(rect && rect.width > 0 && rect.height > 0);
   };
-  const SESSION_METRIC_IDS = new Set(["currentStatus", "executionTime", "autoResume", "currentTaskTokens", "lastTurnTokens", "cacheHitRate", "lastTurnCacheHitRate", "contextCompactions"]);
+  const SESSION_METRIC_IDS = new Set(["currentStatus", "executionTime", "autoResume", "currentTaskTokens", "lastTurnTokens", "cacheHitRate", "lastTurnCacheHitRate", "recentTurnCacheRates", "contextCompactions"]);
   const SESSION_METRIC_FALLBACKS = [
     { id: "currentTaskTokens", label: "当前会话累计 Token", display: "会话 --", value: "--", defaultVisible: true },
     { id: "lastTurnTokens", label: "上次回答消耗 Token", display: "上次回答 --", value: "--", defaultVisible: false },
     { id: "cacheHitRate", label: "总缓存命中率", display: "总缓存 --", value: "--", defaultVisible: false },
     { id: "lastTurnCacheHitRate", label: "上次回答缓存命中率", display: "上次缓存 --", value: "--", defaultVisible: false },
+    { id: "recentTurnCacheRates", label: "最近回答缓存", display: "近期缓存 --", value: "--", recentRates: [], defaultVisible: false },
     { id: "contextCompactions", label: "自动压缩上下文次数", display: "压缩 --", value: "--", defaultVisible: false },
     { id: "executionTime", label: "执行总耗时", display: "耗时 --", value: "--", durationMs: null, defaultVisible: false },
     { id: "autoResume", label: "额度恢复续跑", display: "续跑 --", value: "--", defaultVisible: false },
@@ -32,6 +33,10 @@
   });
   const AUTO_RESUME_DEFAULT_MESSAGE = "继续";
   const MAX_AUTO_RESUME_MESSAGE_LENGTH = 500;
+  const DEFAULT_RECENT_CACHE_TURNS = 5;
+  const MAX_RECENT_CACHE_TURNS = 20;
+  const DEFAULT_CACHE_ALERT_THRESHOLD = 90;
+  const CACHE_METRIC_IDS = new Set(["cacheHitRate", "lastTurnCacheHitRate", "recentTurnCacheRates"]);
   const THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const CUSTOM_PROVIDER_DEFAULTS = Object.freeze({
     id: "custom", label: "API Key", baseUrl: "",
@@ -112,6 +117,13 @@
       running: item.running === true,
       sampledAt: typeof item.sampledAt === "string" && Number.isFinite(Date.parse(item.sampledAt)) ? item.sampledAt : null,
       resetsAt: finiteNumber(item.resetsAt) && Number(item.resetsAt) > 0 ? Number(item.resetsAt) : null,
+      recentRates: (Array.isArray(item.recentRates) ? item.recentRates : []).map((rate) => ({
+        turnId: typeof rate?.turnId === "string" ? rate.turnId.slice(0, 64) : null,
+        completedAt: finiteNumber(rate?.completedAt) ? Number(rate.completedAt) : null,
+        inputTokens: Number.isSafeInteger(rate?.inputTokens) && rate.inputTokens >= 0 ? rate.inputTokens : null,
+        cachedInputTokens: Number.isSafeInteger(rate?.cachedInputTokens) && rate.cachedInputTokens >= 0 ? rate.cachedInputTokens : null,
+        cacheHitRate: finiteNumber(rate?.cacheHitRate) ? Math.max(0, Math.min(100, Number(rate.cacheHitRate))) : null,
+      })).filter((rate) => rate.turnId && rate.completedAt !== null).slice(0, 50),
       defaultVisible: Boolean(item.defaultVisible),
     };
   };
@@ -131,7 +143,7 @@
     return {
       id,
       label: typeof source.label === "string" ? source.label.slice(0, 24) : id,
-      accountType: ["api-key", "api-account", "session", "forecast", "quota-token"].includes(source.accountType) ? source.accountType : "subscription",
+      accountType: ["api-key", "api-account", "ccswitch", "session", "forecast", "quota-token"].includes(source.accountType) ? source.accountType : "subscription",
       status: validStatus(source.status),
       error: typeof source.error === "string" ? source.error.slice(0, 160) : null,
       fetchedAt: finiteNumber(source.fetchedAt) ? Number(source.fetchedAt) : null,
@@ -276,6 +288,28 @@
     }
     return normalized;
   };
+  const normalizeRecentCacheTurns = (value) => finiteNumber(value)
+    ? Math.max(1, Math.min(MAX_RECENT_CACHE_TURNS, Math.trunc(Number(value))))
+    : DEFAULT_RECENT_CACHE_TURNS;
+  const normalizeCacheAlertThreshold = (value) => finiteNumber(value)
+    ? Math.max(0, Math.min(100, Number(Number(value).toFixed(1))))
+    : DEFAULT_CACHE_ALERT_THRESHOLD;
+  const recentCacheAverage = (rates, count) => {
+    const selected = (Array.isArray(rates) ? rates : []).slice(0, normalizeRecentCacheTurns(count));
+    const valid = selected
+      .filter((item) => item?.cacheHitRate !== null && item?.cacheHitRate !== undefined && item?.cacheHitRate !== "")
+      .map((item) => Number(item.cacheHitRate))
+      .filter(Number.isFinite);
+    return valid.length ? valid.reduce((total, value) => total + value, 0) / valid.length : null;
+  };
+  const metricCacheRate = (metric) => {
+    if (!metric || !CACHE_METRIC_IDS.has(metric.id)) return null;
+    if (metric.id === "recentTurnCacheRates") return finiteNumber(metric.cacheRate) ? Number(metric.cacheRate) : null;
+    const match = String(metric.value || "").match(/^\s*(\d+(?:\.\d+)?)\s*%\s*$/);
+    return match ? Math.max(0, Math.min(100, Number(match[1]))) : null;
+  };
+  const isLowCacheRate = (value, threshold) => value !== null && value !== undefined && value !== ""
+    && Number(threshold) > 0 && Number.isFinite(Number(value)) && Number(value) < Number(threshold);
   const autoResumeForThread = (settings, threadId) => {
     const config = threadId ? settings.autoResumeThreads?.[threadId] : null;
     return {
@@ -313,6 +347,8 @@
           ? Boolean(value.showResetForecast)
           : true,
         showQuotaToken: value?.showQuotaToken !== false,
+        recentCacheTurns: normalizeRecentCacheTurns(value?.recentCacheTurns),
+        cacheAlertThreshold: normalizeCacheAlertThreshold(value?.cacheAlertThreshold),
         autoResumeMessage: normalizeAutoResumeMessage(value?.autoResumeMessage),
         autoResumeSharedMessage: value?.autoResumeSharedMessage === true,
       };
@@ -323,6 +359,8 @@
         showApiColumns: false,
         showResetForecast: true,
         showQuotaToken: true,
+        recentCacheTurns: DEFAULT_RECENT_CACHE_TURNS,
+        cacheAlertThreshold: DEFAULT_CACHE_ALERT_THRESHOLD,
         autoResumeThreads: {},
         autoResumeMessage: AUTO_RESUME_DEFAULT_MESSAGE,
         autoResumeSharedMessage: false,
@@ -475,7 +513,7 @@
     metrics: ["forecast", "quota-token"].includes(source.accountType) ? source.metrics
       : source.accountType === "api-key"
       ? apiKeyMetrics(source)
-      : source.accountType === "api-account" ? apiAccountMetrics(source)
+      : ["api-account", "ccswitch"].includes(source.accountType) ? apiAccountMetrics(source)
         : source.accountType === "session" ? sessionMetrics(source) : officialMetrics(source),
   });
   const markup = `
@@ -520,6 +558,7 @@
       white-space: nowrap;
       overflow: hidden;
       font-size: var(--usage-font-size, 11px);
+      -webkit-app-region: no-drag;
     }
     .usage-summary:hover, .usage-summary:focus-visible {
       background: color-mix(in srgb, currentColor 10%, transparent);
@@ -527,6 +566,9 @@
     }
     .usage-summary-items { display: flex; align-items: center; min-width: 0; max-width: 100%; height: 100%; gap: 0; overflow: hidden; line-height: 1; }
     .usage-summary-item { position: relative; display: inline-flex; align-items: center; min-width: 0; height: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .usage-summary-item[data-low-cache="true"],
+    .usage-detail-value[data-low-cache="true"],
+    .usage-recent-cache-rate[data-low-cache="true"] { color: #ef4444; }
     .usage-summary-auto-resume { gap: 5px; overflow: visible; }
     :host([data-minimal="true"]) .usage-summary-auto-resume { gap: 0; }
     .usage-summary-toggle { flex: 0 0 24px; }
@@ -610,7 +652,9 @@
       overscroll-behavior: contain;
       scrollbar-gutter: stable;
       white-space: normal;
+      -webkit-app-region: no-drag;
     }
+    :host([data-anchor="titlebar-right"]) .usage-popover { top: calc(100% + 8px); bottom: auto; }
     .usage-columns {
       display: grid;
       grid-template-columns: var(--usage-column-widths, repeat(var(--usage-column-count, 4), minmax(230px, 1fr)));
@@ -898,6 +942,28 @@
       font: inherit;
     }
     .usage-auto-resume-message:focus-visible { outline: 2px solid color-mix(in srgb, currentColor 42%, transparent); outline-offset: 1px; }
+    .usage-recent-cache-field { display: grid; gap: 5px; min-width: 0; padding: 0 0 7px 19px; }
+    .usage-recent-cache-control { display: flex; align-items: center; justify-content: space-between; gap: 7px; font-size: 9px; font-weight: 650; opacity: .78; }
+    .usage-recent-cache-controls { display: grid; gap: 4px; }
+    .usage-recent-cache-count {
+      box-sizing: border-box;
+      width: 46px;
+      height: 25px;
+      padding: 2px 4px;
+      border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+      border-radius: 5px;
+      color: inherit;
+      background: Canvas;
+      font: inherit;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+    }
+    .usage-recent-cache-count:focus-visible { outline: 2px solid color-mix(in srgb, currentColor 42%, transparent); outline-offset: 1px; }
+    .usage-recent-cache-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 10px; font-variant-numeric: tabular-nums; }
+    .usage-recent-cache-item { display: flex; justify-content: space-between; gap: 8px; min-width: 0; line-height: 1.45; }
+    .usage-recent-cache-item > span:first-child { opacity: .62; }
+    .usage-recent-cache-rate { font-weight: 700; }
+    .usage-recent-cache-empty { font-size: 10px; opacity: .58; }
     .usage-column-meta {
       display: flex;
       justify-content: flex-end;
@@ -1221,7 +1287,9 @@
       usage.sources.official || normalizeSource({ id: "official", label: "官方订阅", accountType: "subscription", status: "unavailable" }, "official"),
       usage.sources["reset-forecast"] || normalizeSource({ id: "reset-forecast", label: "重置概率预测（仅供参考）", accountType: "forecast", status: "unavailable", error: "重置概率预测接口暂不可用" }, "reset-forecast"),
       usage.sources["quota-token"] || normalizeSource({ id: "quota-token", label: "额度对应 Token", accountType: "quota-token", status: "loading", metrics: [{ id: "quotaObservationStatus", label: "观测状态", value: "等待采样", display: "等待采样" }] }, "quota-token"),
-      usage.sources["api-account"] || normalizeSource({ id: "api-account", label: "API 账户", accountType: "api-account", status: "unavailable", error: "未配置 API 账户令牌" }, "api-account"),
+      usage.sources.ccswitch && usage.sources.ccswitch.status !== "unavailable"
+        ? usage.sources.ccswitch
+        : usage.sources["api-account"] || normalizeSource({ id: "api-account", label: "API 账户", accountType: "api-account", status: "unavailable", error: "未配置 API 账户令牌" }, "api-account"),
       { ...apiKeySource, label: "API Key" },
     ].map(selectableSource).map((source) => {
       const localizedStatus = source.status === "loading" ? t("loading") : source.status === "ready" ? t("ready")
@@ -1234,20 +1302,26 @@
           : source.id === "reset-forecast" ? t("resetForecast")
           : source.id === "quota-token" ? t("quotaToken")
           : source.accountType === "api-account" ? t("apiAccount")
+            : source.accountType === "ccswitch" ? source.label
             : source.accountType === "api-key" ? t("apiKey") : source.label,
         metrics: source.metrics.map((metric) => {
           const autoResumeValueKey = !currentAutoResume.enabled ? "autoResumeOff"
             : usage.autoResume.status === "waiting" ? "autoResumeWaitingValue"
               : usage.autoResume.status === "sending" ? "autoResumeSendingValue"
                 : usage.autoResume.status === "sent" ? "autoResumeSentValue" : "autoResumeOn";
+          const recentAverage = metric.id === "recentTurnCacheRates"
+            ? recentCacheAverage(metric.recentRates, settings.recentCacheTurns) : null;
           const value = metric.id === "autoResume" ? t(autoResumeValueKey)
             : metric.id === "executionTime" ? executionTimeDisplay(metric, t)
+            : metric.id === "recentTurnCacheRates" ? (Number.isFinite(recentAverage)
+              ? `${Number(recentAverage.toFixed(1))}%` : "--")
             : metric.id === "requestStatus" ? localizedStatus
             : metric.id.endsWith("Tokens") ? formatLocalizedTokenUnit(metric.value, t.language)
               : metric.value;
           return {
             ...metric,
             value,
+            cacheRate: metric.id === "recentTurnCacheRates" ? recentAverage : metricCacheRate({ ...metric, value }),
             label: t.metric(metric.id, metric.label),
             display: `${t.compact(metric.id, metric.label)} ${value || "--"}`,
           };
@@ -1330,6 +1404,7 @@
           item.dataset.source = source.id;
           item.dataset.metric = metric.id;
           item.title = `${source.label} · ${metric.label}：${metric.value || "--"}`;
+          if (isLowCacheRate(metric.cacheRate, settings.cacheAlertThreshold)) item.dataset.lowCache = "true";
         }
         return item;
       }));
@@ -1337,9 +1412,9 @@
     shadow.querySelector(".usage-summary")?.setAttribute("aria-label", t("displayedItems", { count: selected.length }));
     shadow.querySelector(".usage-popover")?.setAttribute("aria-label", t("displaySettings"));
     const columns = shadow.querySelector(".usage-columns");
-    if (columns && (forceColumns || !shadow.activeElement?.closest?.(".usage-config-form,.usage-auto-resume-field"))) {
+    if (columns && (forceColumns || !shadow.activeElement?.closest?.(".usage-config-form,.usage-auto-resume-field,.usage-recent-cache-field"))) {
       const visibleSources = sources.filter((source) => {
-        if (["api-account", "api-key"].includes(source.accountType)) return settings.showApiColumns;
+        if (["api-account", "api-key", "ccswitch"].includes(source.accountType)) return settings.showApiColumns;
         if (source.accountType === "forecast") return settings.showResetForecast;
         if (source.accountType === "quota-token") return settings.showQuotaToken;
         return true;
@@ -1476,6 +1551,7 @@
               metricValueNode.append(reset, document.createTextNode(` · ${valueText}`));
             } else metricValueNode.textContent = valueText;
             metricValueNode.title = metric.detail || metricValueNode.textContent;
+            if (isLowCacheRate(metric.cacheRate, settings.cacheAlertThreshold)) metricValueNode.dataset.lowCache = "true";
             row.append(select, metricValueNode);
             if (source.accountType === "quota-token" && metric.detail) {
               const detail = document.createElement("span");
@@ -1484,6 +1560,71 @@
               row.append(detail);
             }
             children.push(row);
+            if (metric.id === "recentTurnCacheRates") {
+              const field = document.createElement("div");
+              field.className = "usage-recent-cache-field";
+              const controls = document.createElement("div");
+              controls.className = "usage-recent-cache-controls";
+              const control = document.createElement("label");
+              control.className = "usage-recent-cache-control";
+              const controlLabel = document.createElement("span");
+              controlLabel.textContent = t("recentCacheTurnsLabel");
+              const countInput = document.createElement("input");
+              countInput.type = "number";
+              countInput.className = "usage-recent-cache-count";
+              countInput.dataset.settingNumber = "recentCacheTurns";
+              countInput.min = "1";
+              countInput.max = String(MAX_RECENT_CACHE_TURNS);
+              countInput.step = "1";
+              countInput.value = String(settings.recentCacheTurns);
+              countInput.setAttribute("aria-label", t("recentCacheTurnsLabel"));
+              control.append(controlLabel, countInput);
+              controls.append(control);
+              const alertControl = document.createElement("label");
+              alertControl.className = "usage-recent-cache-control";
+              const alertLabel = document.createElement("span");
+              alertLabel.textContent = t("cacheAlertThresholdLabel");
+              const alertInput = document.createElement("input");
+              alertInput.type = "number";
+              alertInput.className = "usage-recent-cache-count";
+              alertInput.dataset.settingNumber = "cacheAlertThreshold";
+              alertInput.min = "0";
+              alertInput.max = "100";
+              alertInput.step = "0.1";
+              alertInput.value = String(settings.cacheAlertThreshold);
+              alertInput.title = t("cacheAlertThresholdHint");
+              alertInput.setAttribute("aria-label", t("cacheAlertThresholdLabel"));
+              alertControl.append(alertLabel, alertInput);
+              controls.append(alertControl);
+              field.append(controls);
+              const visibleRates = metric.recentRates.slice(0, settings.recentCacheTurns);
+              if (visibleRates.length) {
+                const list = document.createElement("ol");
+                list.className = "usage-recent-cache-list";
+                visibleRates.forEach((rate, index) => {
+                  const item = document.createElement("li");
+                  item.className = "usage-recent-cache-item";
+                  const label = document.createElement("span");
+                  label.textContent = t("recentCacheItem", { index: index + 1 });
+                  const value = document.createElement("span");
+                  value.className = "usage-recent-cache-rate";
+                  value.textContent = finiteNumber(rate.cacheHitRate) ? `${Number(Number(rate.cacheHitRate).toFixed(1))}%` : "--";
+                  if (isLowCacheRate(rate.cacheHitRate, settings.cacheAlertThreshold)) value.dataset.lowCache = "true";
+                  value.title = rate.inputTokens === null || rate.cachedInputTokens === null
+                    ? t("recentCacheUnavailable")
+                    : t("recentCacheDetail", { cached: rate.cachedInputTokens, input: rate.inputTokens });
+                  item.append(label, value);
+                  list.append(item);
+                });
+                field.append(list);
+              } else {
+                const empty = document.createElement("div");
+                empty.className = "usage-recent-cache-empty";
+                empty.textContent = t("recentCacheEmpty");
+                field.append(empty);
+              }
+              children.push(field);
+            }
           }
           rows.replaceChildren(...children);
           return rows;
@@ -1779,6 +1920,19 @@
           saveSettings(settings);
           return;
         }
+        if (["recentCacheTurns", "cacheAlertThreshold"].includes(input.dataset.settingNumber)) {
+          const settings = loadSettings();
+          if (input.dataset.settingNumber === "recentCacheTurns") {
+            settings.recentCacheTurns = normalizeRecentCacheTurns(input.value);
+            input.value = String(settings.recentCacheTurns);
+          } else {
+            settings.cacheAlertThreshold = normalizeCacheAlertThreshold(input.value);
+            input.value = String(settings.cacheAlertThreshold);
+          }
+          saveSettings(settings);
+          render(host, normalizeUsage(window[STATE_KEY]?.usage || window[USAGE_KEY]));
+          return;
+        }
         if (input.type !== "checkbox") return;
         const state = window[STATE_KEY];
         const usage = normalizeUsage(state?.usage || window[USAGE_KEY]);
@@ -1839,6 +1993,7 @@
     host.dataset.resetForecast = String(currentSettings.showResetForecast);
     host.dataset.quotaToken = String(currentSettings.showQuotaToken);
     host.dataset.columnCount = String(2 + (currentSettings.showQuotaToken ? 1 : 0) + (currentSettings.showApiColumns ? 2 : 0) + (currentSettings.showResetForecast ? 1 : 0));
+    if (created || moved || host.dataset.rendered !== "true") render(host, state?.usage || window[USAGE_KEY]);
     const position = configurePosition(host, placement.composer, HOST_ID);
     host.dataset.placementStrategy = placement.strategy;
     host.dataset.status = position.ok ? "ready" : "degraded";
@@ -1853,7 +2008,6 @@
         checkedAt: Date.now(),
       };
     }
-    if (created || moved || host.dataset.rendered !== "true") render(host, state?.usage || window[USAGE_KEY]);
     return host;
   };
 

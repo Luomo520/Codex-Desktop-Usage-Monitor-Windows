@@ -51,8 +51,8 @@ foreach ($file in $powerShellFiles) {
 
 $javascriptFiles = @(
   'assets\usage-constants.js', 'assets\usage-i18n.js', 'assets\usage-placement.js',
-  'assets\usage-inject.js', 'scripts\injector.mjs', 'scripts\current-thread.mjs', 'scripts\usage-client.mjs', 'scripts\usage\scheduling.mjs', 'scripts\validate-provider.mjs',
-  'scripts\ui-settings.mjs', 'scripts\auto-updater.mjs', 'scripts\auto-resume.mjs', 'scripts\desktop-request.mjs', 'tests\current-thread.mjs', 'tests\usage-client.mjs', 'tests\usage-monitor-lifecycle.mjs', 'tests\ui-settings.mjs', 'tests\auto-updater.mjs', 'tests\auto-resume.mjs', 'tests\desktop-request.mjs', 'tests\auto-resume-integration.mjs'
+  'assets\usage-inject.js', 'scripts\injector.mjs', 'scripts\current-thread.mjs', 'scripts\usage-client.mjs', 'scripts\ccswitch-client.mjs', 'scripts\usage\scheduling.mjs', 'scripts\validate-provider.mjs',
+  'scripts\ui-settings.mjs', 'scripts\auto-updater.mjs', 'scripts\auto-resume.mjs', 'scripts\desktop-request.mjs', 'tests\current-thread.mjs', 'tests\ccswitch-client.mjs', 'tests\usage-client.mjs', 'tests\usage-monitor-lifecycle.mjs', 'tests\ui-settings.mjs', 'tests\auto-updater.mjs', 'tests\auto-resume.mjs', 'tests\desktop-request.mjs', 'tests\auto-resume-integration.mjs'
 )
 foreach ($relative in $javascriptFiles) {
   & $node --check (Join-Path $root $relative)
@@ -61,6 +61,8 @@ foreach ($relative in $javascriptFiles) {
 
 & $node (Join-Path $root 'tests\current-thread.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'Current task selection tests failed.' }
+& $node (Join-Path $root 'tests\ccswitch-client.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'CC Switch integration tests failed.' }
 & $node (Join-Path $root 'tests\injector-health.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'Backend heartbeat verification tests failed.' }
 & $pwsh -NoLogo -NoProfile -File (Join-Path $root 'tests\startup-wait.ps1')
@@ -172,7 +174,7 @@ if ($successProbe.TimedOut -or $successProbe.ExitCode -ne 0 -or $successProbe.St
 
 $runtimeFiles = @(
   'assets\usage-constants.js', 'assets\usage-i18n.js', 'assets\usage-placement.js',
-  'assets\usage-inject.js', 'scripts\injector.mjs', 'scripts\current-thread.mjs', 'scripts\auto-updater.mjs', 'scripts\auto-resume.mjs', 'scripts\desktop-request.mjs', 'scripts\auto-update.ps1', 'scripts\usage-client.mjs', 'scripts\usage\scheduling.mjs', 'scripts\monitor-utils.ps1',
+  'assets\usage-inject.js', 'scripts\injector.mjs', 'scripts\current-thread.mjs', 'scripts\auto-updater.mjs', 'scripts\auto-resume.mjs', 'scripts\desktop-request.mjs', 'scripts\auto-update.ps1', 'scripts\usage-client.mjs', 'scripts\ccswitch-client.mjs', 'scripts\usage\scheduling.mjs', 'scripts\monitor-utils.ps1',
   'scripts\start-monitor.ps1', 'scripts\launch-codex-monitor.ps1', 'scripts\launch-codex-monitor-hidden.vbs',
   'scripts\install-monitor-launcher.ps1', 'scripts\configure-api-provider.ps1', 'scripts\clear-api-provider.ps1',
   'scripts\configure-api-account.ps1', 'scripts\clear-api-account.ps1', 'scripts\configure-token-baseline.ps1', 'scripts\clear-token-baseline.ps1'
@@ -187,8 +189,9 @@ if ($runtimeSource -notmatch 'CODEX_USAGE_API_KEY') { throw 'API key environment
 if ($runtimeSource -notmatch 'CODEX_USAGE_ACCOUNT_TOKEN' -or $runtimeSource -notmatch 'New-Api-User') { throw 'API account environment or authentication contract is missing.' }
 if ($runtimeSource -notmatch 'account-token-counter.json' -or $runtimeSource -notmatch 'InitialTokens') { throw 'Token baseline persistence contract is missing.' }
 if ($runtimeSource -notmatch 'official-token-counter.json' -or $runtimeSource -notmatch 'LocalCodexTokenTracker' -or $runtimeSource -notmatch 'last_token_usage' -or $runtimeSource -notmatch 'LOCAL_TOKEN_COUNTER_SCHEMA_VERSION\s*=\s*8' -or $runtimeSource -notmatch 'officialLifetimePendingTokens' -or $runtimeSource -notmatch 'setOfficialLifetimeTokens' -or $runtimeSource -notmatch 'officialLast7DaysPendingTokens' -or $runtimeSource -notmatch 'setOfficialLast7DaysTokens' -or $runtimeSource -notmatch 'OFFICIAL_MODEL_PROVIDER_ID' -or $runtimeSource -notmatch 'requires_openai_auth' -or $runtimeSource -notmatch 'account/read' -or $runtimeSource -notmatch 'config/read' -or $runtimeSource -notmatch 'conversationTokenDelta' -or $runtimeSource -notmatch 'official-conversation-raw' -or $runtimeSource -notmatch 'seenEvents' -or $runtimeSource -notmatch 'thread_settings_applied' -or $runtimeSource -notmatch 'session_meta' -or $runtimeSource -notmatch 'turn_id' -or $runtimeSource -notmatch 'chatgptauthtokens' -or $runtimeSource -notmatch 'personalaccesstoken') { throw 'Official authenticated-provider raw conversation Token attribution and persistence contract is missing.' }
-if ($runtimeSource -notmatch 'data-above-composer-conversation-id' -or $runtimeSource -notmatch 'data-conversation-id' -or $runtimeSource -notmatch 'data-thread-id' -or $runtimeSource -notmatch 'chatgpt' -or $runtimeSource -notmatch 'auxiliaryConversationPresent' -or $runtimeSource -notmatch 'initialRoute' -or $runtimeSource -notmatch 'isMainCodexRendererTarget' -or $runtimeSource -notmatch 'currentStatus' -or $runtimeSource -notmatch 'turn_aborted' -or $runtimeSource -notmatch 'currentTaskTokens' -or $runtimeSource -notmatch 'lastTurnTokens' -or $runtimeSource -notmatch 'cacheHitRate' -or $runtimeSource -notmatch 'cached_input_tokens' -or $runtimeSource -notmatch 'last7DaysTokens' -or $runtimeSource -notmatch 'dailyUsageBuckets' -or $runtimeSource -notmatch 'contextCompactions' -or $runtimeSource -notmatch 'window_number') { throw 'Current-session and seven-day usage contract is missing.' }
+if ($runtimeSource -notmatch 'data-above-composer-conversation-id' -or $runtimeSource -notmatch 'data-conversation-id' -or $runtimeSource -notmatch 'data-thread-id' -or $runtimeSource -notmatch 'chatgpt' -or $runtimeSource -notmatch 'auxiliaryConversationPresent' -or $runtimeSource -notmatch 'initialRoute' -or $runtimeSource -notmatch 'isMainCodexRendererTarget' -or $runtimeSource -notmatch 'currentStatus' -or $runtimeSource -notmatch 'turn_aborted' -or $runtimeSource -notmatch 'currentTaskTokens' -or $runtimeSource -notmatch 'lastTurnTokens' -or $runtimeSource -notmatch 'cacheHitRate' -or $runtimeSource -notmatch 'recentTurnCacheRates' -or $runtimeSource -notmatch 'recentCacheTurns' -or $runtimeSource -notmatch 'cacheAlertThreshold' -or $runtimeSource -notmatch 'cached_input_tokens' -or $runtimeSource -notmatch 'last7DaysTokens' -or $runtimeSource -notmatch 'dailyUsageBuckets' -or $runtimeSource -notmatch 'contextCompactions' -or $runtimeSource -notmatch 'window_number') { throw 'Current-session and seven-day usage contract is missing.' }
 if ($runtimeSource -notmatch 'ProtectedData') { throw 'DPAPI persistence contract is missing.' }
+if ($runtimeSource -notmatch 'DatabaseSync' -or $runtimeSource -notmatch 'readOnly:\s*true' -or $runtimeSource -notmatch 'CC Switch 联动只允许 GET') { throw 'CC Switch read-only integration contract is missing.' }
 if ($runtimeSource -notmatch 'Resolve-CodexUsageCliPath') { throw 'Codex CLI auto-discovery contract is missing.' }
 if ($runtimeSource -notmatch 'Resolve-CodexUsageNonStoreDesktopPath') { throw 'Non-Store Codex Desktop auto-discovery contract is missing.' }
 if ($runtimeSource -notmatch 'Get-CodexUsageAppPackageViaWindowsPowerShell' -or $runtimeSource -notmatch 'Get-CodexUsageWindowsPowerShellPath') { throw 'PowerShell 7 Store package compatibility fallback is missing.' }
@@ -248,7 +251,7 @@ if ($disclaimerAt -lt 0 -or $disclaimerAt -ge $previewAt) { throw 'README unoffi
 if ($readme -match 'CCTQ') { throw 'README quick path should remain provider-neutral; protocol compatibility belongs in the detailed data-source guide.' }
 
 $dataSourceGuide = Get-Content -LiteralPath (Join-Path $root 'docs\data-sources.md') -Raw -Encoding UTF8
-foreach ($requiredDataSourceText in @('official-token-counter.json', '本机实时累计', '有限页数', '圆形表盘', 'CCTQ 风格', '请求指纹', 'HTTP 429', 'K', 'M', 'B')) {
+foreach ($requiredDataSourceText in @('official-token-counter.json', '本机实时累计', '有限页数', '圆形表盘', 'CCTQ 风格', 'CC Switch', 'cc-switch.db', '只读', '请求指纹', 'HTTP 429', 'K', 'M', 'B')) {
   if ($dataSourceGuide -notmatch [regex]::Escape($requiredDataSourceText)) { throw "Detailed data-source guide is missing: $requiredDataSourceText" }
 }
 

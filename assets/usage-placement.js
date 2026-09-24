@@ -23,6 +23,31 @@
   const isApprovalControl = (node) => APPROVAL_PATTERN.test(controlText(node));
   const composerSelector = COMPOSER_SELECTORS.join(", ");
 
+  const findTitlebarPlacement = (hostId) => {
+    const title = String(document.title || "").replace(/\s+/g, " ").trim();
+    if (!title) return null;
+    const candidates = [...document.querySelectorAll("header")].filter((header) => {
+      const rect = box(header);
+      return rect && rect.width >= 320 && rect.height >= 32 && rect.height <= 72 && rect.y >= 0 && rect.y <= 96;
+    });
+    for (const header of candidates) {
+      const buttons = [...header.querySelectorAll(CONTROL_SELECTOR)]
+        .filter((node) => isVisible(node) && !node.closest(`#${hostId}`));
+      const titleControl = buttons.find((node) => String(node.textContent || "").replace(/\s+/g, " ").trim() === title);
+      const titleBox = box(titleControl);
+      if (!titleControl || !titleBox) continue;
+      const rightControls = buttons.map((node) => ({ node, rect: box(node) }))
+        .filter((item) => item.rect && item.rect.x > titleBox.right + 8)
+        .sort((left, right) => left.rect.x - right.rect.x);
+      const headerBox = box(header);
+      const rightBoundary = rightControls[0]?.rect.x ?? (headerBox?.right ?? window.innerWidth) - 12;
+      const available = Math.max(0, Math.floor(rightBoundary - titleBox.right - 24));
+      if (available < 104) continue;
+      return { header, titleControl, titleBox, rightBoundary, available };
+    }
+    return null;
+  };
+
   // ChatGPT Chat and Work share ComposerLayoutRoot and the top-level mode.
   // Use field metadata, never message contents or the global ChatGPT selector.
   const isChatGptComposer = (node) => {
@@ -102,6 +127,43 @@
   const configurePosition = (host, composer, hostId) => {
     const composerBox = box(composer);
     if (!composerBox) return { ok: false, reason: "composer-box-unavailable" };
+    const titlebar = findTitlebarPlacement(hostId);
+    if (titlebar) {
+      const titleStyle = getComputedStyle(titlebar.titleControl);
+      host.style.setProperty("--usage-color", titleStyle.color);
+      if (titleStyle.fontSize) host.style.setProperty("--usage-font-size", titleStyle.fontSize);
+      const surface = getComputedStyle(titlebar.header).backgroundColor;
+      host.style.setProperty("--usage-surface", surface && surface !== "rgba(0, 0, 0, 0)" ? surface : "rgba(255, 255, 255, .96)");
+      const hostBox = box(host);
+      const hostWidth = Math.min(titlebar.available, Math.max(104, Math.ceil(hostBox?.width || 280)));
+      const hostHeight = Math.max(24, Math.ceil(hostBox?.height || titlebar.titleBox.height));
+      const placementX = Math.max(titlebar.titleBox.right + 12, titlebar.rightBoundary - hostWidth - 12);
+      const placementY = Math.max(8, titlebar.titleBox.y + (titlebar.titleBox.height - hostHeight) / 2);
+      host.style.setProperty("--usage-left", `${Math.round(placementX)}px`);
+      host.style.setProperty("--usage-top", `${Math.round(placementY)}px`);
+      host.style.setProperty("--usage-max-width", `${titlebar.available}px`);
+      host.dataset.anchor = "titlebar-right";
+      host.dataset.compact = String(titlebar.available < 210);
+      host.hidden = false;
+      const apiColumnsVisible = host.dataset.apiColumns !== "false";
+      const quotaTokenVisible = host.dataset.quotaToken !== "false";
+      const baseColumnCount = (apiColumnsVisible ? 4 : 2) + (quotaTokenVisible ? 1 : 0);
+      const columnCount = Math.max(baseColumnCount, Number.parseInt(host.dataset.columnCount, 10) || baseColumnCount);
+      const resetForecastVisible = host.dataset.resetForecast !== "false";
+      const columnWidths = [230, 230];
+      if (resetForecastVisible) columnWidths.push(160);
+      if (quotaTokenVisible) columnWidths.push(400);
+      if (apiColumnsVisible) columnWidths.push(230, 170);
+      while (columnWidths.length < columnCount) columnWidths.push(230);
+      const columnWidthTotal = columnWidths.reduce((total, width) => total + width, 0);
+      const renderedPopoverWidth = box(host.shadowRoot?.querySelector(".usage-popover"))?.width || 0;
+      const popoverWidth = Math.max(280, renderedPopoverWidth, columnWidthTotal + 40);
+      const rightEdgeShift = window.innerWidth - 12 - placementX - popoverWidth;
+      host.style.setProperty("--usage-column-widths", columnWidths.map((width) => `${width}px`).join(" "));
+      host.style.setProperty("--usage-popover-width", `${popoverWidth}px`);
+      host.style.setProperty("--usage-popover-shift", `${Math.min(0, rightEdgeShift) - 8}px`);
+      return { ok: true, reason: null, anchor: host.dataset.anchor, availableWidth: titlebar.available, controlCount: 1 };
+    }
     const controls = [...composer.querySelectorAll(CONTROL_SELECTOR)]
       .filter((node) => isVisible(node) && !node.closest(`#${hostId}`));
     const approval = controls.find(isApprovalControl) || null;
@@ -191,5 +253,5 @@
     };
   };
 
-  registry.placement = Object.freeze({ box, findPlacement, configurePosition });
+  registry.placement = Object.freeze({ box, findPlacement, findTitlebarPlacement, configurePosition });
 })();

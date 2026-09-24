@@ -16,6 +16,11 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { createQuotaTokenObserver } from "./quota-token-observer.mjs";
 import {
+  formatCcSwitchTime,
+  queryCcSwitchBalance,
+  readCcSwitchSnapshot,
+} from "./ccswitch-client.mjs";
+import {
   LOCAL_TOKEN_ACTIVE_SCAN_MS,
   LOCAL_TOKEN_IDLE_SCAN_MS,
   LOCAL_TOKEN_ACTIVE_WINDOW_MS,
@@ -779,6 +784,7 @@ export class LocalCodexTokenTracker {
       executionTimeUpdatedAt: null,
       cacheHitRate: null,
       lastTurnCacheHitRate: null,
+      recentTurnCacheRates: [],
       contextCompactions: null,
       quotaExceeded: null,
       autoResumeTasks: {},
@@ -868,6 +874,7 @@ export class LocalCodexTokenTracker {
       && (!view.executionTimeRunning || this.view.executionTimeUpdatedAt === view.executionTimeUpdatedAt)
       && this.view.cacheHitRate === view.cacheHitRate
       && this.view.lastTurnCacheHitRate === view.lastTurnCacheHitRate
+      && JSON.stringify(this.view.recentTurnCacheRates) === JSON.stringify(view.recentTurnCacheRates)
       && this.view.contextCompactions === view.contextCompactions
       && this.view.quotaExceeded?.eventId === view.quotaExceeded?.eventId
       && JSON.stringify(this.view.autoResumeTasks) === JSON.stringify(view.autoResumeTasks)
@@ -1068,7 +1075,7 @@ export class LocalCodexTokenTracker {
 
   taskTokenView(threadId) {
     const stats = this.turnCacheStats.get(threadId);
-    if (!stats) return { tokens: null, cacheRate: null, lastTokens: null, lastCacheRate: null };
+    if (!stats) return { tokens: null, cacheRate: null, lastTokens: null, lastCacheRate: null, recentCacheRates: [] };
     if (!stats.dirty) return stats.view;
     let previousTotal = null, tokens = 0, input = 0, cached = 0;
     const turns = new Map();
@@ -1088,10 +1095,26 @@ export class LocalCodexTokenTracker {
     }
     const last = [...stats.completions.entries()].sort((a, b) => b[1] - a[1])[0];
     const turn = last ? turns.get(last[0]) : null;
+    const recentCacheRates = [...stats.completions.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 50)
+      .map(([turnId, completedAt]) => {
+        const completedTurn = turns.get(turnId);
+        return {
+          turnId,
+          completedAt,
+          inputTokens: completedTurn?.valid && Number.isSafeInteger(completedTurn.input) ? completedTurn.input : null,
+          cachedInputTokens: completedTurn?.valid && Number.isSafeInteger(completedTurn.cached) ? completedTurn.cached : null,
+          cacheHitRate: completedTurn?.valid && completedTurn.input > 0
+            ? Math.min(100, 100 * completedTurn.cached / completedTurn.input)
+            : null,
+        };
+      });
     stats.view = { tokens: stats.events.size && Number.isSafeInteger(tokens) ? tokens : null,
       cacheRate: input > 0 ? Math.min(100, 100 * cached / input) : null,
       lastTokens: last ? (turn?.tokens ?? 0) : null,
-      lastCacheRate: turn?.valid && turn.input > 0 ? Math.min(100, 100 * turn.cached / turn.input) : null };
+      lastCacheRate: turn?.valid && turn.input > 0 ? Math.min(100, 100 * turn.cached / turn.input) : null,
+      recentCacheRates };
     stats.dirty = false;
     return stats.view;
   }
@@ -1416,6 +1439,7 @@ export class LocalCodexTokenTracker {
         currentTaskTokens: taskTokens.tokens,
         lastTurnTokens: taskTokens.lastTokens,
         lastTurnCacheHitRate: taskTokens.lastCacheRate,
+        recentTurnCacheRates: taskTokens.recentCacheRates,
         currentStatus: SESSION_STATUS_VALUES.has(currentTask?.currentStatus) ? currentTask.currentStatus : null,
         ...this.executionView(this.currentThreadId, now),
         cacheHitRate,
@@ -1553,6 +1577,16 @@ export function mergeOfficialLocalUsage(officialView, localView, now = new Date(
     lastTurnTokens: Number.isSafeInteger(localView?.lastTurnTokens) && localView.lastTurnTokens >= 0 ? localView.lastTurnTokens : null,
     lastTurnCacheHitRate: Number.isFinite(localView?.lastTurnCacheHitRate)
       ? Math.max(0, Math.min(100, localView.lastTurnCacheHitRate)) : null,
+    recentTurnCacheRates: (Array.isArray(localView?.recentTurnCacheRates) ? localView.recentTurnCacheRates : [])
+      .map((item) => ({
+        turnId: typeof item?.turnId === "string" ? item.turnId.slice(0, 64) : null,
+        completedAt: Number.isFinite(Number(item?.completedAt)) ? Number(item.completedAt) : null,
+        inputTokens: Number.isSafeInteger(item?.inputTokens) && item.inputTokens >= 0 ? item.inputTokens : null,
+        cachedInputTokens: Number.isSafeInteger(item?.cachedInputTokens) && item.cachedInputTokens >= 0 ? item.cachedInputTokens : null,
+        cacheHitRate: Number.isFinite(item?.cacheHitRate) ? Math.max(0, Math.min(100, item.cacheHitRate)) : null,
+      }))
+      .filter((item) => item.turnId && item.completedAt !== null)
+      .slice(0, 50),
     currentStatus: SESSION_STATUS_VALUES.has(localView?.currentStatus) ? localView.currentStatus : null,
     executionTimeMs: Number.isSafeInteger(localView?.executionTimeMs) && localView.executionTimeMs >= 0 ? localView.executionTimeMs : null,
     executionTimeEstimated: localView?.executionTimeEstimated === true,
@@ -1780,6 +1814,17 @@ export function toSessionUsageSource(view, now = Date.now(), refreshMs = DEFAULT
         defaultVisible: false,
       },
       {
+        id: "recentTurnCacheRates",
+        label: "最近回答缓存",
+        value: Array.isArray(view?.recentTurnCacheRates) && view.recentTurnCacheRates.length
+          ? `${view.recentTurnCacheRates.length} 次`
+          : "--",
+        display: `近期缓存 ${Array.isArray(view?.recentTurnCacheRates) && view.recentTurnCacheRates.length ? `${view.recentTurnCacheRates.length}次` : "--"}`,
+        detail: "按完成时间从新到旧显示最近若干次回答的缓存输入 Token / 输入 Token。",
+        recentRates: (Array.isArray(view?.recentTurnCacheRates) ? view.recentTurnCacheRates : []).slice(0, 50),
+        defaultVisible: false,
+      },
+      {
         id: "contextCompactions",
         label: "自动压缩上下文次数",
         display: `压缩 ${compactionValue}`,
@@ -1945,6 +1990,13 @@ function formatAccountTokens(value) {
   return formatExactMetricTokens(number);
 }
 
+function formatMillionTokens(value) {
+  if (!Number.isFinite(Number(value))) return "--";
+  const millions = Math.max(0, Number(value)) / 1000000;
+  const decimals = millions >= 1 ? 2 : millions >= 0.1 ? 3 : millions >= 0.01 ? 4 : 6;
+  return `${Number(millions.toFixed(decimals))}M`;
+}
+
 function normalizeLogTimestamp(value) {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric > 0) return numeric > 100000000000 ? numeric : numeric * 1000;
@@ -2084,6 +2136,120 @@ export function normalizeApiAccountView(profileResponse, logs, {
     nextRefreshAt: now + refreshMs,
     metrics,
   };
+}
+
+function formatCcSwitchAmount(value, unit = "USD", decimals = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  const normalizedUnit = String(unit || "USD").trim();
+  const symbol = normalizedUnit === "USD" ? "$" : normalizedUnit === "CNY" ? "¥" : `${normalizedUnit} `;
+  return `${symbol}${number.toFixed(decimals)}`;
+}
+
+export function normalizeCcSwitchView(snapshot, balanceResult, {
+  now = Date.now(),
+  refreshMs = DEFAULT_REFRESH_MS,
+  error = null,
+} = {}) {
+  if (!snapshot?.provider) {
+    return {
+      id: "ccswitch", label: "CC Switch", accountType: "ccswitch", status: "unavailable",
+      error: "未找到 CC Switch 当前 Codex 供应商", fetchedAt: null, nextRefreshAt: now + refreshMs, metrics: [],
+    };
+  }
+  const stats = snapshot.stats || {};
+  const latest = stats.latest || null;
+  const unit = String(balanceResult?.unit || "USD");
+  const remaining = balanceResult?.remaining ?? balanceResult?.balance;
+  const used = balanceResult?.used ?? balanceResult?.usedQuota;
+  const extra = String(balanceResult?.extra || "");
+  const extraTokens = Number(extra.match(/([0-9][0-9,]*)\s*tokens?\b/i)?.[1]?.replace(/,/g, ""));
+  const extraCost = Number(extra.match(/(?:\$|USD\s*)([0-9]+(?:\.[0-9]+)?)/i)?.[1]);
+  const todayTokens = stats.todayTokens > 0 ? stats.todayTokens : Number.isFinite(extraTokens) ? extraTokens : 0;
+  const todayCostUsd = stats.todayCostUsd > 0 ? stats.todayCostUsd : Number.isFinite(extraCost) ? extraCost : 0;
+  const balanceValue = formatCcSwitchAmount(remaining, unit);
+  const usedValue = Number.isFinite(Number(used)) ? formatCcSwitchAmount(used, unit) : formatCcSwitchAmount(stats.totalCostUsd, "USD");
+  const latestCost = formatCcSwitchAmount(latest?.costUsd, "USD", 3);
+  const metrics = [
+    { id: "balance", label: "账户余额", value: balanceValue, display: `余额 ${balanceValue}`, defaultVisible: true },
+    { id: "usedQuota", label: "累计已用额度", value: usedValue, display: `已用 ${usedValue}`, defaultVisible: false },
+    { id: "todayTokens", label: "今日 Token", value: formatMillionTokens(todayTokens), display: `今日 ${formatMillionTokens(todayTokens)}`, defaultVisible: false },
+    { id: "totalTokens", label: "累计 Token", value: formatAccountTokens(stats.totalTokens), display: `累计 ${formatAccountTokens(stats.totalTokens)}`, defaultVisible: false },
+    { id: "lastQuota", label: "上次消耗额度", value: latestCost, display: `消耗 ${latestCost}`, defaultVisible: false },
+    { id: "lastModel", label: "上次响应模型", value: latest?.model || "--", display: `模型 ${latest?.model || "--"}`, defaultVisible: false },
+    { id: "lastRequestAt", label: "上次请求时间", value: formatCcSwitchTime(latest?.createdAt), display: `请求 ${formatCcSwitchTime(latest?.createdAt)}`, defaultVisible: false },
+    { id: "lastLatency", label: "上次响应耗时", value: Number.isFinite(Number(latest?.latencyMs)) ? `${Math.max(0, Number(latest.latencyMs))}ms` : "--", display: `耗时 ${Number.isFinite(Number(latest?.latencyMs)) ? `${Math.max(0, Number(latest.latencyMs))}ms` : "--"}`, defaultVisible: false },
+  ];
+  return {
+    id: "ccswitch",
+    label: `CC Switch · ${snapshot.provider.name}`,
+    accountType: "ccswitch",
+    status: error ? "stale" : balanceResult?.isValid === false ? "error" : "ready",
+    error: error || balanceResult?.invalidMessage || (!snapshot.usage ? "当前供应商没有启用余额脚本；Token 与请求指标仍可用" : null),
+    fetchedAt: now,
+    nextRefreshAt: now + refreshMs,
+    metrics,
+    details: { planName: balanceResult?.planName || null, todayCostUsd },
+  };
+}
+
+export class CcSwitchUsageClient {
+  constructor({ databasePath, fetchImpl = fetch, refreshMs = DEFAULT_REFRESH_MS, managed = false, now = () => Date.now(), onUpdate = () => {} } = {}) {
+    this.databasePath = databasePath;
+    this.fetchImpl = fetchImpl;
+    this.refreshMs = refreshMs;
+    this.managed = managed;
+    this.now = now;
+    this.onUpdate = onUpdate;
+    this.timer = null;
+    this.refreshing = null;
+    this.stopped = true;
+    this.view = normalizeCcSwitchView(null, null, { refreshMs });
+  }
+
+  emit(view) { this.view = view; this.onUpdate(view); }
+
+  async refresh() {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = (async () => {
+      let snapshot;
+      try {
+        snapshot = readCcSwitchSnapshot({ databasePath: this.databasePath });
+        if (!snapshot) {
+          this.emit(normalizeCcSwitchView(null, null, { now: this.now(), refreshMs: this.refreshMs }));
+          return;
+        }
+        const balance = snapshot.usage ? await queryCcSwitchBalance(snapshot, { fetchImpl: this.fetchImpl }) : null;
+        this.emit(normalizeCcSwitchView(snapshot, balance, { now: this.now(), refreshMs: this.refreshMs }));
+      } catch (cause) {
+        const message = String(cause?.message || "CC Switch 数据读取失败").slice(0, 240);
+        this.emit(snapshot
+          ? normalizeCcSwitchView(snapshot, null, { now: this.now(), refreshMs: this.refreshMs, error: message })
+          : { ...this.view, status: "error", error: message, nextRefreshAt: this.now() + this.refreshMs });
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    return this.refreshing;
+  }
+
+  async start() {
+    if (!this.stopped) return this.view;
+    this.stopped = false;
+    await this.refresh();
+    if (!this.managed) {
+      this.timer = setInterval(() => this.refresh().catch(() => {}), this.refreshMs);
+      this.timer.unref?.();
+    }
+    return this.view;
+  }
+
+  async stop() {
+    this.stopped = true;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    await this.refreshing?.catch(() => {});
+  }
 }
 
 export class ApiUsageClient {
@@ -2656,6 +2822,7 @@ export class CombinedUsageClient {
     this.officialView = { status: "loading", windows: [], todayTokens: null, last7DaysTokens: null, lifetimeTokens: null, fetchedAt: null, error: null };
     this.localOfficialView = { status: "loading", dailyDate: null, todayTokens: null, last7DaysTokens: null, lifetimeTokens: null, cacheHitRate: null, fetchedAt: null, error: null };
     this.accountView = normalizeApiAccountView(null, [], { refreshMs });
+    this.ccswitchView = normalizeCcSwitchView(null, null, { refreshMs });
     this.apiView = normalizeApiUsageView(null, null, provider);
     this.forecastView = normalizeResetForecastView(null, { refreshMs: RESET_FORECAST_REFRESH_MS });
     this.quotaObserver = createQuotaTokenObserver({ statePath: process.env.LOCALAPPDATA
@@ -2699,6 +2866,7 @@ export class CombinedUsageClient {
       },
     });
     this.account = new ApiAccountUsageClient({ refreshMs, managed: true, onUpdate: (view) => { this.accountView = view; this.emit(); } });
+    this.ccswitch = new CcSwitchUsageClient({ refreshMs, managed: true, onUpdate: (view) => { this.ccswitchView = view; this.emit(); } });
     this.api = new ApiUsageClient({ provider, refreshMs, managed: true, onUpdate: (view) => { this.apiView = view; this.emit(); } });
     this.forecast = new ResetForecastClient({ fetchImpl: forecastFetch, managed: true, onUpdate: (view) => { this.forecastView = view; this.emit(); } });
   }
@@ -2713,6 +2881,7 @@ export class CombinedUsageClient {
         session: toSessionUsageSource(officialView, Date.now(), this.refreshMs),
         official: toOfficialUsageSource(officialView, Date.now(), this.refreshMs),
         "api-account": this.accountView,
+        ccswitch: this.ccswitchView,
         [this.apiView.id]: this.apiView,
         "reset-forecast": this.forecastView,
         "quota-token": toQuotaTokenSource(this.quotaObserver.getSummary(), Date.now(), this.refreshMs),
@@ -2731,7 +2900,7 @@ export class CombinedUsageClient {
   setRefreshInterval(refreshMs) {
     if (![30000, 60000].includes(refreshMs) || refreshMs === this.refreshMs) return;
     this.refreshMs = refreshMs;
-    for (const client of [this.official, this.account, this.api]) client.refreshMs = refreshMs;
+    for (const client of [this.official, this.account, this.api, this.ccswitch].filter(Boolean)) client.refreshMs = refreshMs;
     if (this.timer) this.scheduleRefresh();
   }
 
@@ -2741,21 +2910,24 @@ export class CombinedUsageClient {
     this.timer = setInterval(() => {
       this.nextRefreshAt = Date.now() + this.refreshMs;
       this.emit();
-      Promise.all([this.official.refresh(), this.account.refresh(), this.api.refresh(), this.forecast.refresh()]).catch(() => {});
+      Promise.all([this.official, this.account, this.api, this.ccswitch, this.forecast]
+        .filter(Boolean).map(client => client.refresh())).catch(() => {});
     }, this.refreshMs);
     this.timer.unref?.();
     this.emit();
   }
 
   async start() {
-    await Promise.all([this.official.start(), this.localOfficial.start(), this.account.start(), this.api.start(), this.forecast.start()]);
+    await Promise.all([this.official, this.localOfficial, this.account, this.api, this.ccswitch, this.forecast]
+      .filter(Boolean).map(client => client.start()));
     this.scheduleRefresh();
   }
 
   async stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    await Promise.all([this.official.stop(), this.localOfficial.stop(), this.account.stop(), this.api.stop(), this.forecast.stop()]);
+    await Promise.all([this.official, this.localOfficial, this.account, this.api, this.ccswitch, this.forecast]
+      .filter(Boolean).map(client => client.stop()));
     await this.quotaObservationQueue;
     this.quotaObserver.flush();
   }
@@ -2825,7 +2997,7 @@ class AppServerRpc {
     });
 
     await this.request("initialize", {
-      clientInfo: { name: "codex-usage-monitor", title: "Codex Usage Monitor", version: "3.1.2" },
+      clientInfo: { name: "codex-usage-monitor", title: "Codex Usage Monitor", version: "3.1.3" },
       capabilities: { optOutNotificationMethods: [] },
     });
     this.notify("initialized");

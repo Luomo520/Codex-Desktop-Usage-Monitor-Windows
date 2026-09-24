@@ -93,6 +93,11 @@ const usage = {
         { id: "currentTaskTokens", label: "当前会话累计 Token", display: "会话 3822万", value: "3822万", defaultVisible: true },
         { id: "lastTurnTokens", label: "上次回答消耗 Token", display: "上次回答 8万", value: "8万", defaultVisible: false },
         { id: "cacheHitRate", label: "缓存命中率", display: "缓存 95.3%", value: "95.3%", defaultVisible: false },
+        { id: "recentTurnCacheRates", label: "最近回答缓存", display: "近期缓存 3次", value: "3 次", recentRates: [
+          { turnId: "turn-3", completedAt: now - 1000, inputTokens: 1000, cachedInputTokens: 900, cacheHitRate: 90 },
+          { turnId: "turn-2", completedAt: now - 2000, inputTokens: 800, cachedInputTokens: 600, cacheHitRate: 75 },
+          { turnId: "turn-1", completedAt: now - 3000, inputTokens: null, cachedInputTokens: null, cacheHitRate: null },
+        ], defaultVisible: false },
         { id: "contextCompactions", label: "自动压缩上下文次数", display: "压缩 3", value: "3", defaultVisible: false },
       ],
     },
@@ -273,7 +278,7 @@ try {
   assert.equal(host.style.getPropertyValue("--usage-popover-shift"), "-698px");
   assert.deepEqual(columns.map((column) => column.querySelector(".usage-column-heading").textContent), ["本会话", "官方订阅", "重置概率预测（仅供参考）", "额度对应 Token", "API 账户", "API Key"]);
   assert.deepEqual(columns.map((column) => column.dataset.status), ["ready", "ready", "ready", "loading", "loading", "error"]);
-  assert.deepEqual(columns.map((column) => column.querySelectorAll(".usage-detail-row").length), [7, 6, 4, 1, 8, 4]);
+  assert.deepEqual(columns.map((column) => column.querySelectorAll(".usage-detail-row").length), [8, 6, 4, 1, 8, 4]);
   const tiboActivity = columns[2].querySelector(".usage-tibo-activity");
   assert.equal(tiboActivity.querySelector(".usage-tibo-activity-label").textContent, "Tibo 最新动态");
   assert.equal(host.shadowRoot.querySelector(".usage-reset-method").textContent, "预告方式：发放重置卡");
@@ -282,7 +287,7 @@ try {
   assert.equal(tiboActivity.querySelector(".usage-tibo-activity-link").href, "https://x.com/thsottiaux/status/2094588317245509959");
   assert.match(tiboActivity.querySelector(".usage-tibo-activity-time").textContent, /^发布于 \d{2}-\d{2} \d{2}:\d{2}$/);
   assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-tibo-activity-text\s*\{[\s\S]*?-webkit-line-clamp:\s*3;/);
-  assert.deepEqual([...columns[0].querySelectorAll('input[data-source="session"][data-metric]')].map((input) => input.dataset.metric), ["currentTaskTokens", "lastTurnTokens", "cacheHitRate", "lastTurnCacheHitRate", "contextCompactions", "executionTime", "autoResume"]);
+  assert.deepEqual([...columns[0].querySelectorAll('input[data-source="session"][data-metric]')].map((input) => input.dataset.metric), ["currentTaskTokens", "lastTurnTokens", "cacheHitRate", "lastTurnCacheHitRate", "recentTurnCacheRates", "contextCompactions", "executionTime", "autoResume"]);
   assert.equal(columns[0].querySelector('[data-metric="executionTime"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "执行总耗时");
   assert.equal(columns[0].querySelector('[data-metric="executionTime"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "11分31秒");
   assert.equal(host.shadowRoot.querySelector('[data-metric="currentStatus"]'), null);
@@ -293,6 +298,39 @@ try {
   assert.equal(columns[0].querySelector('[data-metric="cacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "总缓存命中率");
   assert.equal(columns[0].querySelector('[data-metric="cacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "95.3%");
   assert.equal(columns[0].querySelector('[data-metric="lastTurnCacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "上次回答缓存命中率");
+  const recentCacheMetric = columns[0].querySelector('[data-metric="recentTurnCacheRates"]');
+  assert.equal(recentCacheMetric.closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "最近回答缓存");
+  assert.equal(recentCacheMetric.closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "82.5%");
+  assert.equal(recentCacheMetric.closest(".usage-detail-row").querySelector(".usage-detail-value").dataset.lowCache, "true");
+  assert.equal(recentCacheMetric.closest(".usage-detail-row").nextElementSibling.className, "usage-recent-cache-field");
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-recent-cache-rate")].map((item) => item.textContent), ["90%", "75%", "--"]);
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-recent-cache-rate")].map((item) => item.dataset.lowCache || null), [null, "true", null]);
+  const recentCacheCount = host.shadowRoot.querySelector('[data-setting-number="recentCacheTurns"]');
+  assert.equal(recentCacheCount.value, "5");
+  recentCacheCount.value = "2";
+  recentCacheCount.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.getSettings().recentCacheTurns, 2);
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).recentCacheTurns, 2);
+  assert.equal(host.shadowRoot.querySelector('[data-metric="recentTurnCacheRates"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "82.5%");
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-recent-cache-rate")].map((item) => item.textContent), ["90%", "75%"]);
+  const cacheAlertThreshold = host.shadowRoot.querySelector('[data-setting-number="cacheAlertThreshold"]');
+  assert.equal(cacheAlertThreshold.value, "90");
+  assert.equal(cacheAlertThreshold.closest(".usage-recent-cache-control").querySelector("span").textContent, "低于此命中率标红");
+  cacheAlertThreshold.value = "80";
+  cacheAlertThreshold.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.getSettings().cacheAlertThreshold, 80);
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).cacheAlertThreshold, 80);
+  assert.equal(host.shadowRoot.querySelector('[data-metric="recentTurnCacheRates"]').closest(".usage-detail-row").querySelector(".usage-detail-value").dataset.lowCache, undefined,
+    "average above threshold stays in the normal color");
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-recent-cache-rate")].map((item) => item.dataset.lowCache || null), [null, "true"],
+    "only the individual rate strictly below the threshold is red");
+  const recentSummaryCheckbox = host.shadowRoot.querySelector('input[data-source="session"][data-metric="recentTurnCacheRates"]');
+  recentSummaryCheckbox.click();
+  assert.equal(host.shadowRoot.querySelector('.usage-summary-item[data-metric="recentTurnCacheRates"]').dataset.lowCache, undefined);
+  host.shadowRoot.querySelector('[data-setting-number="cacheAlertThreshold"]').value = "90";
+  host.shadowRoot.querySelector('[data-setting-number="cacheAlertThreshold"]').dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(host.shadowRoot.querySelector('.usage-summary-item[data-metric="recentTurnCacheRates"]').dataset.lowCache, "true");
+  host.shadowRoot.querySelector('input[data-source="session"][data-metric="recentTurnCacheRates"]').click();
   const quotaUsage = structuredClone(usage);
   quotaUsage.sources["quota-token"] = {
     id: "quota-token", accountType: "quota-token", status: "ready",
@@ -332,7 +370,7 @@ try {
   const unavailableSessionColumn = host.shadowRoot.querySelector('.usage-column[data-status="unavailable"]');
   assert.ok(unavailableSessionColumn);
   assert.equal(unavailableSessionColumn.querySelector(".usage-status").getAttribute("aria-label"), "暂无数据");
-  assert.deepEqual([...unavailableSessionColumn.querySelectorAll(".usage-detail-value")].map((item) => item.textContent), ["--", "--", "--", "--", "--", "--"]);
+  assert.deepEqual([...unavailableSessionColumn.querySelectorAll(".usage-detail-value")].map((item) => item.textContent), ["--", "--", "--", "--", "--", "--", "--"]);
   assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
   assert.deepEqual(columns.map((column) => column.querySelector(".usage-status").getAttribute("aria-label")), ["正常", "正常", "正常", "请求中", "请求中", "请求失败"]);
   const limitedUsage = structuredClone(usage);
@@ -343,7 +381,7 @@ try {
   assert.equal(host.shadowRoot.querySelector('[data-source="acme"][data-metric="requestStatus"]')?.closest(".usage-detail-row")?.querySelector(".usage-detail-value")?.textContent, "请求受限");
   assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
   assert.equal(host.shadowRoot.querySelectorAll('input[data-metric]:checked').length, 5);
-  assert.deepEqual([...columns[1].querySelectorAll(".usage-column-brand > *")].map((item) => item.textContent), ["Codex Usage Monitor for Windows v3.1.2", "—— Designed by +羊 and Codex"]);
+  assert.deepEqual([...columns[1].querySelectorAll(".usage-column-brand > *")].map((item) => item.textContent), ["Codex Usage Monitor for Windows v3.1.3", "—— Designed by +羊 and Codex"]);
   assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-column-brand\s*\{[\s\S]*?align-self:\s*flex-end;[\s\S]*?width:\s*fit-content;[\s\S]*?margin:\s*0 8px 0 0;[\s\S]*?font-weight:\s*450;[\s\S]*?opacity:\s*\.55;/);
   assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-brand-product\s*\{[^}]*font-size:\s*12px;/);
   assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-brand-credit\s*\{\s*font-size:\s*9px;\s*font-weight:\s*450;\s*text-align:\s*right;/);
@@ -697,6 +735,9 @@ try {
   assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="currentTaskTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "38.22M");
   assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="lastTurnTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Last answer tokens");
   assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="cacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Total cache hit rate");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="recentTurnCacheRates"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Recent answer cache");
+  assert.equal(host.shadowRoot.querySelector(".usage-recent-cache-control span").textContent, "Show recent answers");
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-recent-cache-item > span:first-child")].map((item) => item.textContent), ["Answer 1", "Answer 2"]);
   assert.equal(host.shadowRoot.querySelector('input[data-source="official"][data-metric="last7DaysTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Tokens in last 7 days");
   assert.equal(host.shadowRoot.querySelector('input[data-source="official"][data-metric="last7DaysTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "2.4M");
   assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="lastTurnTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "80K");
@@ -738,6 +779,27 @@ try {
   window.__CODEX_USAGE_MONITOR_STATE__.ensure();
   assert.equal(host.dataset.anchor, 'approval');
   assert.equal(host.style.getPropertyValue('--usage-left'), '234px');
+
+  // Prefer the current conversation title bar and right-align before its actions.
+  const titleHeader = window.document.createElement("header");
+  const titleButton = window.document.createElement("button");
+  const titleAction = window.document.createElement("button");
+  window.document.title = "测试会话标题";
+  titleButton.textContent = window.document.title;
+  titleAction.setAttribute("aria-label", "聊天操作");
+  titleHeader.append(titleButton, titleAction);
+  titleHeader.getBoundingClientRect = () => ({ x: 275, y: 36, width: 1462, height: 46, right: 1737, bottom: 82 });
+  titleButton.getBoundingClientRect = () => ({ x: 295, y: 47, width: 211, height: 24, right: 506, bottom: 71 });
+  titleAction.getBoundingClientRect = () => ({ x: 1593, y: 45, width: 28, height: 28, right: 1621, bottom: 73 });
+  window.document.body.append(titleHeader);
+  window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+  assert.equal(host.dataset.anchor, "titlebar-right");
+  assert.equal(host.style.getPropertyValue("--usage-left"), "1201px");
+  assert.equal(host.style.getPropertyValue("--usage-top"), "45px");
+  assert.match(host.shadowRoot.querySelector("style").textContent, /data-anchor="titlebar-right"[^}]+\.usage-popover\s*\{[^}]*top:\s*calc\(100% \+ 8px\);[^}]*bottom:\s*auto;/);
+  titleHeader.remove();
+  window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+  assert.equal(host.dataset.anchor, "approval");
 
   window.document.getElementById("composer-wrapper").innerHTML = updatedComposerMarkup();
   await new Promise((resolve) => setTimeout(resolve, 250));

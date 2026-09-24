@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { AUTO_RESUME_MESSAGE, normalizeAutoResumeMessage } from "./auto-resume.mjs";
 
-export const UI_SETTINGS_SCHEMA_VERSION = 2;
+export const UI_SETTINGS_SCHEMA_VERSION = 4;
 export const UI_SETTINGS_FILE_NAME = "ui-settings.json";
 export const MAX_UI_SETTINGS_BYTES = 64 * 1024;
 
@@ -15,6 +15,12 @@ const BOOLEAN_FIELDS = ["minimalMode", "countdownVisualization", "refreshEvery30
 const safeVersion = (value) => Number.isSafeInteger(Number(value)) && Number(value) >= 0
   ? Math.min(1000, Number(value))
   : 0;
+const normalizeRecentCacheTurns = (value) => Number.isFinite(Number(value))
+  ? Math.max(1, Math.min(20, Math.trunc(Number(value))))
+  : 5;
+const normalizeCacheAlertThreshold = (value) => Number.isFinite(Number(value))
+  ? Math.max(0, Math.min(100, Number(Number(value).toFixed(1))))
+  : 90;
 
 export function normalizeUiSettings(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -51,6 +57,8 @@ export function normalizeUiSettings(value) {
   normalized.showQuotaToken = Object.prototype.hasOwnProperty.call(value, "showQuotaToken")
     ? Boolean(value.showQuotaToken)
     : true;
+  normalized.recentCacheTurns = normalizeRecentCacheTurns(value.recentCacheTurns);
+  normalized.cacheAlertThreshold = normalizeCacheAlertThreshold(value.cacheAlertThreshold);
   normalized.autoResumeMessage = normalizeAutoResumeMessage(value.autoResumeMessage, AUTO_RESUME_MESSAGE);
   normalized.autoResumeThreads = {};
   if (value.autoResumeThreads && typeof value.autoResumeThreads === "object" && !Array.isArray(value.autoResumeThreads)) {
